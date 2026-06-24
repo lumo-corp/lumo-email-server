@@ -1,98 +1,63 @@
 /**
- * LUMO E-Mail-Server + Google Calendar Integration
- * Läuft auf Railway.app
+ * LUMO E-Mail & Google Calendar Server
+ * Läuft auf Railway.app - Ausfallsichere Version
  */
 
 const http = require("http");
 const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
 
-// Neue SMTP-Konfiguration für Cloud-Umgebungen (Port 587)
+// SMTP Konfiguration für IONOS (Port 587 mit TLS-Fallback)
 const SMTP_CONFIG = {
   host: "smtp.ionos.de",
   port: 587,
-  secure: false, // false für Port 587, da STARTTLS genutzt wird
+  secure: false, 
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
   tls: {
-    rejectUnauthorized: false // Verhindert, dass Railway wegen Zertifikaten blockiert
-  }
+    rejectUnauthorized: false
+  },
+  connectionTimeout: 8000 // Nach 8 Sekunden abbrechen, um den Kalender nicht zu blockieren
 };
 
 const FROM_ADDRESS = `"LUMO Terminbuchung" <${process.env.SMTP_USER}>`;
 const PORT = process.env.PORT || 3001;
 
-// CORS: deine Webseite eintragen
+const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+const privateKey = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined;
+const calendarId = process.env.GOOGLE_CALENDAR_ID;
+
+let calendar = null;
+
+if (clientEmail && privateKey && calendarId) {
+  try {
+    const auth = new google.auth.JWT(
+      clientEmail,
+      null,
+      privateKey,
+      ["https://www.googleapis.com/auth/calendar"]
+    );
+    calendar = google.calendar({ version: "v3", auth });
+    console.log("📅 Google Calendar API erfolgreich initialisiert.");
+  } catch (e) {
+    console.error("❌ Fehler bei Google Calendar Initialisierung:", e.message);
+  }
+}
+
 const ALLOWED_ORIGINS = [
   "https://lumo-ai.de",
   "https://www.lumo-ai.de",
-  "http://localhost",           // zum lokalen Testen
+  "http://localhost",
   "http://127.0.0.1",
 ];
 
-// Google Calendar API Auth einrichten
-const SCOPES = ['https://www.googleapis.com/auth/calendar'];
-let calendar = null;
-
-if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
-  const auth = new google.auth.JWT(
-    process.env.GOOGLE_CLIENT_EMAIL,
-    null,
-    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // Zeilenumbrüche fixen
-    SCOPES
-  );
-  calendar = google.calendar({ version: 'v3', auth });
-  console.log("📅 Google Calendar API initialisiert.");
-} else {
-  console.warn("⚠️ Google Calendar Variablen fehlen noch in Railway!");
-}
-
 const transporter = nodemailer.createTransport(SMTP_CONFIG);
-
-// Hilfsfunktion für den Google Kalendereintrag
-async function erstelleKalenderEintrag(kundeEmail, startZeit, endZeit) {
-  if (!calendar || !process.env.GOOGLE_CALENDAR_ID) {
-    console.log("⏭️ Kalendereintrag übersprungen (API nicht konfiguriert oder Variablen fehlen).");
-    return;
-  }
-
-  // Fallback-Zeiten, falls das Widget keine mitschickt (heute in 1 Stunde für 30 Min)
-  const defaultStart = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-  const defaultEnd = new Date(Date.now() + 90 * 60 * 1000).toISOString();
-
-  const event = {
-    'summary': 'Dein LUMO Beratungstermin',
-    'description': `Automatisch erstellter Termin für ${kundeEmail}.`,
-    'start': {
-      'dateTime': startZeit || defaultStart, // Format: '2026-06-25T14:00:00+02:00'
-      'timeZone': 'Europe/Berlin',
-    },
-    'end': {
-      'dateTime': endZeit || defaultEnd,     // Format: '2026-06-25T14:30:00+02:00'
-      'timeZone': 'Europe/Berlin',
-    },
-    'attendees': [
-      { 'email': kundeEmail }
-    ],
-    'reminders': {
-      'useDefault': true,
-    },
-  };
-
-  await calendar.events.insert({
-    calendarId: process.env.GOOGLE_CALENDAR_ID,
-    resource: event,
-    sendUpdates: 'all', // Verschickt die schicke Google-E-Mail-Einladung!
-  });
-  console.log(`📅 Google Kalendereintrag erstellt & Einladung an ${kundeEmail} gesendet!`);
-}
 
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin || "";
 
-  // CORS-Header
   if (ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
@@ -115,45 +80,54 @@ const server = http.createServer(async (req, res) => {
   req.on("data", chunk => (body += chunk));
   req.on("end", async () => {
     try {
-      const payload = JSON.parse(body);
-      const { toCustomer, toOwner } = payload;
+      const data = JSON.parse(body);
+      const { toCustomer, toOwner, startZeit, endZeit } = data;
 
       if (!toCustomer?.to || !toOwner?.to) {
         res.writeHead(400);
-        res.end(JSON.stringify({ error: "Fehlende Empfänger" }));
+        res.end(JSON.stringify({ error: "Fehlende Empfänger-Daten" }));
         return;
       }
 
-      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-      if (!emailRe.test(toCustomer.to)) {
-        res.writeHead(400);
-        res.end(JSON.stringify({ error: "Ungültige E-Mail" }));
-        return;
+      // 1. E-Mails senden (in einem geschützten try/catch, damit Mail-Fehler den Kalender NICHT blockieren!)
+      let emailGesendet = false;
+      try {
+        await Promise.all([
+          transporter.sendMail({ from: FROM_ADDRESS, to: toCustomer.to, subject: toCustomer.subject, html: toCustomer.html }),
+          transporter.sendMail({ from: FROM_ADDRESS, to: toOwner.to,   subject: toOwner.subject,   html: toOwner.html   }),
+        ]);
+        console.log(`✅ IONOS E-Mails erfolgreich gesendet.`);
+        emailGesendet = true;
+      } catch (mailErr) {
+        console.warn("⚠️ IONOS SMTP blockiert (Timeout). Versuche trotzdem Kalendereintrag...", mailErr.message);
       }
-
-      // 1. E-Mails wie gewohnt senden
-      await Promise.all([
-        transporter.sendMail({ from: FROM_ADDRESS, to: toCustomer.to, subject: toCustomer.subject, html: toCustomer.html }),
-        transporter.sendMail({ from: FROM_ADDRESS, to: toOwner.to,   subject: toOwner.subject,   html: toOwner.html   }),
-      ]);
-      console.log(`✅ E-Mails gesendet → ${toCustomer.to}`);
 
       // 2. Google Kalendereintrag erstellen
-      // Sucht nach startZeit/endZeit im Request (entweder direkt oder im toCustomer Objekt)
-      const startZeit = payload.startZeit || toCustomer.startZeit;
-      const endZeit = payload.endZeit || toCustomer.endZeit;
-      
-      try {
-        await erstelleKalenderEintrag(toCustomer.to, startZeit, endZeit);
-      } catch (calErr) {
-        console.error("❌ Fehler beim Kalendereintrag (E-Mails gingen trotzdem raus):", calErr.message);
-        // Wir blockieren die Response nicht, falls nur der Kalender zickt
+      if (calendar && startZeit && endZeit) {
+        const kundenName = toCustomer.subject.split("–")[1]?.trim() || "Interessent";
+        
+        await calendar.events.insert({
+          calendarId: calendarId,
+          sendUpdates: "all", // Google schickt die Einladung direkt per Mail an den Kunden!
+          requestBody: {
+            summary: `Erstgespräch – ${kundenName}`,
+            description: `Automatische Buchung über lumo-ai.de\nKunde: ${kundenName}\nE-Mail: ${toCustomer.to}`,
+            start: { dateTime: startZeit, timeZone: "Europe/Berlin" },
+            end: { dateTime: endZeit, timeZone: "Europe/Berlin" },
+            attendees: [
+              { email: toCustomer.to }, 
+              { email: toOwner.to }     
+            ],
+          },
+        });
+        console.log("📅 Google Kalendereintrag & Google-Einladung erfolgreich erstellt!");
       }
 
+      // Wir melden dem Widget "Erfolg", solange der Kalendereintrag klappt
       res.writeHead(200);
-      res.end(JSON.stringify({ ok: true }));
+      res.end(JSON.stringify({ ok: true, emailSent: emailGesendet }));
     } catch (err) {
-      console.error("❌ Allgemeiner Fehler:", err.message);
+      console.error("❌ Kritischer Fehler im Server-Ablauf:", err.message);
       res.writeHead(500);
       res.end(JSON.stringify({ error: err.message }));
     }
@@ -161,9 +135,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`📬 LUMO E-Mail-Server läuft auf Port ${PORT}`);
-  transporter.verify((err) => {
-    if (err) console.error("⚠️  SMTP-Fehler:", err.message);
-    else     console.log("✅ SMTP-Verbindung erfolgreich!");
-  });
+  console.log(`🚀 Server läuft auf Port ${PORT}`);
 });
