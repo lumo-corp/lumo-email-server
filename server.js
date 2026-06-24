@@ -1,48 +1,40 @@
 /**
  * LUMO E-Mail & Google Calendar Server
- * Läuft auf Railway.app - Ausfallsichere Version
+ * Läuft auf Railway.app
  */
 
 const http = require("http");
 const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
 
-// SMTP Konfiguration für IONOS (Port 587 mit TLS-Fallback)
 const SMTP_CONFIG = {
   host: "smtp.ionos.de",
   port: 587,
-  secure: false, 
+  secure: false,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  tls: {
-    rejectUnauthorized: false
-  },
-  connectionTimeout: 8000 // Nach 8 Sekunden abbrechen, um den Kalender nicht zu blockieren
+  tls: { rejectUnauthorized: false },
+  connectionTimeout: 8000
 };
 
 const FROM_ADDRESS = `"LUMO Terminbuchung" <${process.env.SMTP_USER}>`;
 const PORT = process.env.PORT || 3001;
 
+// Google Calendar Setup
 const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-const privateKey = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined;
-const calendarId = process.env.GOOGLE_CALENDAR_ID;
+const privateKey  = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n") : undefined;
+const calendarId  = process.env.GOOGLE_CALENDAR_ID;
 
 let calendar = null;
-
 if (clientEmail && privateKey && calendarId) {
   try {
-    const auth = new google.auth.JWT(
-      clientEmail,
-      null,
-      privateKey,
-      ["https://www.googleapis.com/auth/calendar"]
-    );
+    const auth = new google.auth.JWT(clientEmail, null, privateKey, ["https://www.googleapis.com/auth/calendar"]);
     calendar = google.calendar({ version: "v3", auth });
     console.log("📅 Google Calendar API erfolgreich initialisiert.");
   } catch (e) {
-    console.error("❌ Fehler bei Google Calendar Initialisierung:", e.message);
+    console.error("❌ Google Calendar Fehler:", e.message);
   }
 }
 
@@ -57,77 +49,63 @@ const transporter = nodemailer.createTransport(SMTP_CONFIG);
 
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin || "";
-
   if (ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
+  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   if (req.method !== "POST" || req.url !== "/send-email") {
-    res.writeHead(404);
-    res.end(JSON.stringify({ error: "Not found" }));
-    return;
+    res.writeHead(404); res.end(JSON.stringify({ error: "Not found" })); return;
   }
 
   let body = "";
   req.on("data", chunk => (body += chunk));
   req.on("end", async () => {
     try {
-      const data = JSON.parse(body);
-      const { toCustomer, toOwner, startZeit, endZeit } = data;
+      const { toCustomer, toOwner, startZeit, endZeit } = JSON.parse(body);
 
       if (!toCustomer?.to || !toOwner?.to) {
-        res.writeHead(400);
-        res.end(JSON.stringify({ error: "Fehlende Empfänger-Daten" }));
-        return;
+        res.writeHead(400); res.end(JSON.stringify({ error: "Fehlende Empfänger" })); return;
       }
 
-      // 1. E-Mails senden (in einem geschützten try/catch, damit Mail-Fehler den Kalender NICHT blockieren!)
-      let emailGesendet = false;
+      // 1. E-Mails senden
+      let emailSent = false;
       try {
         await Promise.all([
           transporter.sendMail({ from: FROM_ADDRESS, to: toCustomer.to, subject: toCustomer.subject, html: toCustomer.html }),
-          transporter.sendMail({ from: FROM_ADDRESS, to: toOwner.to,   subject: toOwner.subject,   html: toOwner.html   }),
+          transporter.sendMail({ from: FROM_ADDRESS, to: toOwner.to,   subject: toOwner.subject,   html: toOwner.html }),
         ]);
-        console.log(`✅ IONOS E-Mails erfolgreich gesendet.`);
-        emailGesendet = true;
+        console.log(`✅ E-Mails gesendet → ${toCustomer.to}`);
+        emailSent = true;
       } catch (mailErr) {
-        console.warn("⚠️ IONOS SMTP blockiert (Timeout). Versuche trotzdem Kalendereintrag...", mailErr.message);
+        console.warn("⚠️ E-Mail fehlgeschlagen:", mailErr.message);
       }
 
-      // 2. Google Kalendereintrag erstellen
+      // 2. Google Kalender — OHNE attendees (vermeidet Domain-Delegation Fehler)
       if (calendar && startZeit && endZeit) {
-        const kundenName = toCustomer.subject.split("–")[1]?.trim() || "Interessent";
-        
-        await calendar.events.insert({
-          calendarId: calendarId,
-          sendUpdates: "all", // Google schickt die Einladung direkt per Mail an den Kunden!
-          requestBody: {
-            summary: `Erstgespräch – ${kundenName}`,
-            description: `Automatische Buchung über lumo-ai.de\nKunde: ${kundenName}\nE-Mail: ${toCustomer.to}`,
-            start: { dateTime: startZeit, timeZone: "Europe/Berlin" },
-            end: { dateTime: endZeit, timeZone: "Europe/Berlin" },
-            attendees: [
-              { email: toCustomer.to }, 
-              { email: toOwner.to }     
-            ],
-          },
-        });
-        console.log("📅 Google Kalendereintrag & Google-Einladung erfolgreich erstellt!");
+        try {
+          const kundenName = toCustomer.subject.replace("✅ Terminbestätigung LUMO – ", "").split(",")[0] || "Kunde";
+          await calendar.events.insert({
+            calendarId: calendarId,
+            requestBody: {
+              summary: `Erstgespräch – ${kundenName}`,
+              description: `Gebucht über lumo-ai.de\nKunde: ${kundenName}\nE-Mail: ${toCustomer.to}`,
+              start: { dateTime: startZeit, timeZone: "Europe/Berlin" },
+              end:   { dateTime: endZeit,   timeZone: "Europe/Berlin" },
+            },
+          });
+          console.log("📅 Kalendereintrag erstellt!");
+        } catch (calErr) {
+          console.error("❌ Kalender Fehler:", calErr.message);
+        }
       }
 
-      // Wir melden dem Widget "Erfolg", solange der Kalendereintrag klappt
       res.writeHead(200);
-      res.end(JSON.stringify({ ok: true, emailSent: emailGesendet }));
+      res.end(JSON.stringify({ ok: true, emailSent }));
     } catch (err) {
-      console.error("❌ Kritischer Fehler im Server-Ablauf:", err.message);
+      console.error("❌ Server Fehler:", err.message);
       res.writeHead(500);
       res.end(JSON.stringify({ error: err.message }));
     }
