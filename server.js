@@ -7,15 +7,18 @@ const http = require("http");
 const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
 
-// SMTP-Konfiguration
+// Neue SMTP-Konfiguration für Cloud-Umgebungen (Port 587)
 const SMTP_CONFIG = {
   host: "smtp.ionos.de",
-  port: 465,
-  secure: true,
+  port: 587,
+  secure: false, // false für Port 587, da STARTTLS genutzt wird
   auth: {
-    user: process.env.SMTP_USER,   // wird in Railway als Variable gesetzt
-    pass: process.env.SMTP_PASS,   // wird in Railway als Variable gesetzt
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
   },
+  tls: {
+    rejectUnauthorized: false // Verhindert, dass Railway wegen Zertifikaten blockiert
+  }
 };
 
 const FROM_ADDRESS = `"LUMO Terminbuchung" <${process.env.SMTP_USER}>`;
