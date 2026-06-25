@@ -1,3 +1,4 @@
+// Update 2
 /**
  * LUMO E-Mail & Google Calendar Server
  * Läuft auf Railway.app — verwendet Resend für E-Mails
