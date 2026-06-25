@@ -106,3 +106,43 @@ const server = http.createServer(async (req, res) => {
                   requestId: `lumo-${Date.now()}-${Math.random().toString(36).slice(2)}`,
                   conferenceSolutionKey: { type: "hangoutsMeet" },
                 },
+              },
+            },
+          });
+          meetLink = calResponse.data.conferenceData?.entryPoints
+            ?.find(e => e.entryPointType === "video")?.uri || null;
+          console.log(`📅 Kalendereintrag erstellt! Meet-Link: ${meetLink || "— kein Link erhalten"}`);
+        } catch (calErr) {
+          console.error("❌ Kalender Fehler:", calErr.message);
+        }
+      }
+      // 2. Meet-Link in die E-Mail-HTML einsetzen (oder Platzhalter-Block entfernen)
+      const customerHtml = injectMeetLink(toCustomer.html, meetLink);
+      const ownerHtml = injectMeetLink(toOwner.html, meetLink);
+      // 3. E-Mails via Resend senden
+      let emailSent = false;
+      try {
+        await Promise.all([
+          sendEmail(toCustomer.to, toCustomer.subject, customerHtml),
+          sendEmail(toOwner.to,   toOwner.subject,   ownerHtml),
+        ]);
+        console.log(`✅ E-Mails gesendet via Resend → ${toCustomer.to}`);
+        emailSent = true;
+      } catch (mailErr) {
+        console.error("❌ Resend Fehler:", mailErr.message);
+      }
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, emailSent, meetLink }));
+    } catch (err) {
+      console.error("❌ Server Fehler:", err.message);
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  });
+});
+
+server.listen(PORT, () => {
+  console.log(`🚀 LUMO Server läuft auf Port ${PORT}`);
+  if (!RESEND_API_KEY) console.warn("⚠️ RESEND_API_KEY fehlt!");
+  if (!calendar)       console.warn("⚠️ Google Calendar nicht initialisiert!");
+});
