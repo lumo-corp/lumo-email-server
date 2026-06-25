@@ -1,26 +1,14 @@
 /**
  * LUMO E-Mail & Google Calendar Server
- * Läuft auf Railway.app
+ * Läuft auf Railway.app — verwendet Resend für E-Mails
  */
 
 const http = require("http");
-const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
 
-const SMTP_CONFIG = {
-  host: "smtp.ionos.de",
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: { rejectUnauthorized: false },
-  connectionTimeout: 8000
-};
-
-const FROM_ADDRESS = `"LUMO Terminbuchung" <${process.env.SMTP_USER}>`;
 const PORT = process.env.PORT || 3001;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const FROM_ADDRESS = "LUMO Terminbuchung <hallo@lumo-ai.de>";
 
 // Google Calendar Setup
 const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
@@ -45,7 +33,22 @@ const ALLOWED_ORIGINS = [
   "http://127.0.0.1",
 ];
 
-const transporter = nodemailer.createTransport(SMTP_CONFIG);
+// E-Mail senden via Resend API
+async function sendEmail(to, subject, html) {
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${RESEND_API_KEY}`,
+    },
+    body: JSON.stringify({ from: FROM_ADDRESS, to, subject, html }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Resend Fehler: ${err}`);
+  }
+  return res.json();
+}
 
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin || "";
@@ -70,28 +73,28 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(400); res.end(JSON.stringify({ error: "Fehlende Empfänger" })); return;
       }
 
-      // 1. E-Mails senden
+      // 1. E-Mails via Resend senden
       let emailSent = false;
       try {
         await Promise.all([
-          transporter.sendMail({ from: FROM_ADDRESS, to: toCustomer.to, subject: toCustomer.subject, html: toCustomer.html }),
-          transporter.sendMail({ from: FROM_ADDRESS, to: toOwner.to,   subject: toOwner.subject,   html: toOwner.html }),
+          sendEmail(toCustomer.to, toCustomer.subject, toCustomer.html),
+          sendEmail(toOwner.to,   toOwner.subject,   toOwner.html),
         ]);
-        console.log(`✅ E-Mails gesendet → ${toCustomer.to}`);
+        console.log(`✅ E-Mails gesendet via Resend → ${toCustomer.to}`);
         emailSent = true;
       } catch (mailErr) {
-        console.warn("⚠️ E-Mail fehlgeschlagen:", mailErr.message);
+        console.error("❌ Resend Fehler:", mailErr.message);
       }
 
-      // 2. Google Kalender — OHNE attendees (vermeidet Domain-Delegation Fehler)
+      // 2. Google Kalender Eintrag
       if (calendar && startZeit && endZeit) {
         try {
-          const kundenName = toCustomer.subject.replace("✅ Terminbestätigung LUMO – ", "").split(",")[0] || "Kunde";
+          const kundenName = toCustomer.to;
           await calendar.events.insert({
             calendarId: calendarId,
             requestBody: {
-              summary: `Erstgespräch – ${kundenName}`,
-              description: `Gebucht über lumo-ai.de\nKunde: ${kundenName}\nE-Mail: ${toCustomer.to}`,
+              summary: `Erstgespräch – ${toCustomer.subject.split("LUMO – ")[1]?.split(",")[0] || "Kunde"}`,
+              description: `Gebucht über lumo-ai.de\nE-Mail: ${toCustomer.to}`,
               start: { dateTime: startZeit, timeZone: "Europe/Berlin" },
               end:   { dateTime: endZeit,   timeZone: "Europe/Berlin" },
             },
@@ -113,5 +116,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Server läuft auf Port ${PORT}`);
+  console.log(`🚀 LUMO Server läuft auf Port ${PORT}`);
+  if (!RESEND_API_KEY) console.warn("⚠️ RESEND_API_KEY fehlt!");
+  if (!calendar)       console.warn("⚠️ Google Calendar nicht initialisiert!");
 });
