@@ -1,5 +1,6 @@
 const http = require("http");
 const { google } = require("googleapis");
+const { handleQuestionnaire } = require("./questionnaire");
 
 const PORT = process.env.PORT || 3001;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -78,6 +79,10 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+  if (req.method === "POST" && req.url === "/api/questionnaire") {
+    handleQuestionnaire(req, res);
+    return;
+  }
   if (req.method !== "POST" || req.url !== "/send-email") {
     res.writeHead(404); res.end(JSON.stringify({ error: "Not found" })); return;
   }
