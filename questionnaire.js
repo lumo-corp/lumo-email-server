@@ -25,8 +25,8 @@ const esc = (s) =>
 function row(q, a) {
   return `
     <tr>
-      <td style="padding:10px 12px;border-bottom:1px solid #e6d9b3;width:45%;vertical-align:top;font-weight:bold;color:#1A1A2E;">${esc(q)}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #e6d9b3;vertical-align:top;color:#1A1A2E;white-space:pre-wrap;">${
+      <td style="padding:10px 12px;border-bottom:1px solid #e6d9b3;width:45%;vertical-align:top;font-weight:bold;color:#2A1A0E;">${esc(q)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e6d9b3;vertical-align:top;color:#2A1A0E;white-space:pre-wrap;">${
         a ? esc(a) : '<span style="color:#9a9a9a;">–</span>'
       }</td>
     </tr>`;
@@ -47,7 +47,7 @@ function buildHtml(data) {
   return `<!DOCTYPE html>
 <html><body style="margin:0;background:#F5EDD6;padding:24px;">
   <div style="max-width:760px;margin:0 auto;background:#fffdf7;border:1px solid #e6d9b3;">
-    <div style="background:#1A1A2E;padding:24px 28px;border-bottom:4px solid #C9A84C;">
+    <div style="background:#2A1A0E;padding:24px 28px;border-bottom:4px solid #C9A84C;">
       <div style="font-family:Arial,sans-serif;font-size:12px;letter-spacing:0.35em;color:#C9A84C;font-weight:bold;">L U M O</div>
       <div style="font-family:Georgia,serif;font-size:22px;color:#F5EDD6;margin-top:10px;">Neue Fragebogen-Antwort</div>
     </div>
