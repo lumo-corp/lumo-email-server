@@ -8,12 +8,38 @@ const path = require("path");
 const FROM_ADDRESS = process.env.QUESTIONNAIRE_FROM || "LUMO <hallo@lumo-ai.de>";
 const MAX_BODY_BYTES = 200 * 1024;
 
-// Logo wird als eingebettetes Bild (cid) mitgeschickt – so zeigen es auch Gmail & Co.
-let LOGO_BASE64 = null;
+// Logo wird als eingebettetes Bild (cid) mitgeschickt – so zeigen es auch Gmail & Outlook.
+// Quelle: das Original von der Webseite (LOGO_URL); Ersatz: logo.png aus diesem Repo.
+const LOGO_URL = process.env.LOGO_URL || "https://www.lumo-ai.de/lumo-logo.png";
+const LOGO_CACHE_MS = 60 * 60 * 1000;
+const LOGO_MAX_BYTES = 1.5 * 1024 * 1024;
+
+let LOCAL_LOGO_BASE64 = null;
 try {
-  LOGO_BASE64 = fs.readFileSync(path.join(__dirname, "logo.png")).toString("base64");
+  LOCAL_LOGO_BASE64 = fs.readFileSync(path.join(__dirname, "logo.png")).toString("base64");
 } catch (e) {
-  console.warn("⚠️ logo.png nicht gefunden – E-Mail ohne Logo");
+  console.warn("⚠️ logo.png nicht gefunden – Ersatz-Logo fehlt");
+}
+
+let logoCache = { value: LOCAL_LOGO_BASE64, fetchedAt: 0 };
+async function getLogo() {
+  if (Date.now() - logoCache.fetchedAt < LOGO_CACHE_MS) return logoCache.value;
+  let value = LOCAL_LOGO_BASE64;
+  try {
+    const r = await fetch(LOGO_URL, { signal: AbortSignal.timeout(5000) });
+    const type = r.headers.get("content-type") || "";
+    if (r.ok && type.startsWith("image/")) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > 0 && buf.length <= LOGO_MAX_BYTES) value = buf.toString("base64");
+      else console.warn("⚠️ Logo von der Webseite zu groß oder leer – Ersatz-Logo");
+    } else {
+      console.warn(`⚠️ Logo von der Webseite nicht ladbar (${r.status}) – Ersatz-Logo`);
+    }
+  } catch (e) {
+    console.warn("⚠️ Logo-Abruf fehlgeschlagen – Ersatz-Logo:", e.message);
+  }
+  logoCache = { value, fetchedAt: Date.now() };
+  return value;
 }
 
 // Einfaches Rate-Limit im Speicher: max. 5 Sendungen pro IP und Stunde
@@ -43,7 +69,7 @@ function row(q, a) {
     </tr>`;
 }
 
-function buildHtml(data) {
+function buildHtml(data, hasLogo) {
   const metaRows = (data.meta || []).map((m) => row(m.q, m.a)).join("");
   const sections = (data.sections || [])
     .map(
@@ -60,7 +86,7 @@ function buildHtml(data) {
   <div style="max-width:760px;margin:0 auto;background:#FFFFFF;border:1px solid #E4DFD3;">
     <div style="background:#F5F0E8;padding:22px 28px;">
       <table role="presentation" style="border-collapse:collapse;"><tr>
-        ${LOGO_BASE64 ? '<td style="padding-right:18px;vertical-align:middle;"><img src="cid:lumo-logo" width="70" alt="LUMO" style="display:block;border:0;"></td>' : ""}
+        ${hasLogo ? '<td style="padding-right:18px;vertical-align:middle;"><img src="cid:lumo-logo" width="70" alt="LUMO" style="display:block;border:0;"></td>' : ""}
         <td style="vertical-align:middle;font-family:Arial,sans-serif;">
           <div style="font-size:13px;letter-spacing:0.16em;color:#D4922A;font-weight:bold;">WEBSITE &amp; PERSONAL BRAND QUESTIONNAIRE</div>
           <div style="font-size:15px;color:#939290;margin-top:6px;">Neue Antwort eingegangen</div>
@@ -129,6 +155,8 @@ function handleQuestionnaire(req, res) {
 
       const guestName = String(data.meta?.[0]?.a || "").slice(0, 80) || "unbekannt";
 
+      const logo = await getLogo();
+
       const r = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -136,14 +164,14 @@ function handleQuestionnaire(req, res) {
           from: FROM_ADDRESS,
           to: [to],
           subject: `Fragebogen Tourguide – ${guestName}`,
-          html: buildHtml(data),
+          html: buildHtml(data, !!logo),
           text: buildText(data),
-          ...(LOGO_BASE64
+          ...(logo
             ? {
                 attachments: [
                   {
                     filename: "lumo-logo.png",
-                    content: LOGO_BASE64,
+                    content: logo,
                     content_type: "image/png",
                     content_id: "lumo-logo",
                   },
