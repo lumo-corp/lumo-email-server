@@ -2,8 +2,19 @@
 // Nimmt die Antworten aus dem Formular entgegen und schickt sie per Resend an OWNER_EMAIL.
 // Benötigte Railway-Variablen: RESEND_API_KEY (vorhanden), OWNER_EMAIL (neu).
 
+const fs = require("fs");
+const path = require("path");
+
 const FROM_ADDRESS = process.env.QUESTIONNAIRE_FROM || "LUMO <hallo@lumo-ai.de>";
 const MAX_BODY_BYTES = 200 * 1024;
+
+// Logo wird als eingebettetes Bild (cid) mitgeschickt – so zeigen es auch Gmail & Co.
+let LOGO_BASE64 = null;
+try {
+  LOGO_BASE64 = fs.readFileSync(path.join(__dirname, "logo.png")).toString("base64");
+} catch (e) {
+  console.warn("⚠️ logo.png nicht gefunden – E-Mail ohne Logo");
+}
 
 // Einfaches Rate-Limit im Speicher: max. 5 Sendungen pro IP und Stunde
 const hits = new Map();
@@ -47,10 +58,16 @@ function buildHtml(data) {
   return `<!DOCTYPE html>
 <html><body style="margin:0;background:#F5F0E8;padding:24px;">
   <div style="max-width:760px;margin:0 auto;background:#FFFFFF;border:1px solid #E4DFD3;">
-    <div style="background:#F5F0E8;padding:24px 28px;border-bottom:4px solid #D4922A;">
-      <div style="font-family:Arial,sans-serif;font-size:12px;letter-spacing:0.3em;color:#D4922A;font-weight:bold;">L U M O</div>
-      <div style="font-family:Arial,sans-serif;font-size:22px;font-weight:bold;color:#5A5855;margin-top:10px;">Neue Fragebogen-Antwort</div>
+    <div style="background:#F5F0E8;padding:22px 28px;">
+      <table role="presentation" style="border-collapse:collapse;"><tr>
+        ${LOGO_BASE64 ? '<td style="padding-right:18px;vertical-align:middle;"><img src="cid:lumo-logo" width="70" alt="LUMO" style="display:block;border:0;"></td>' : ""}
+        <td style="vertical-align:middle;font-family:Arial,sans-serif;">
+          <div style="font-size:13px;letter-spacing:0.16em;color:#D4922A;font-weight:bold;">WEBSITE &amp; PERSONAL BRAND QUESTIONNAIRE</div>
+          <div style="font-size:15px;color:#939290;margin-top:6px;">Neue Antwort eingegangen</div>
+        </td>
+      </tr></table>
     </div>
+    <div style="background:#D4922A;color:#FFFFFF;padding:13px 28px;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">Neue Fragebogen-Antwort</div>
     <div style="padding:8px 28px 28px;">
       <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;margin-top:18px;">${metaRows}</table>
       ${sections}
@@ -121,6 +138,18 @@ function handleQuestionnaire(req, res) {
           subject: `Fragebogen Tourguide – ${guestName}`,
           html: buildHtml(data),
           text: buildText(data),
+          ...(LOGO_BASE64
+            ? {
+                attachments: [
+                  {
+                    filename: "lumo-logo.png",
+                    content: LOGO_BASE64,
+                    content_type: "image/png",
+                    content_id: "lumo-logo",
+                  },
+                ],
+              }
+            : {}),
         }),
       });
 
