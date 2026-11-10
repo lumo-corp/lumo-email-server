@@ -25,8 +25,8 @@ const esc = (s) =>
 function row(q, a) {
   return `
     <tr>
-      <td style="padding:10px 12px;border-bottom:1px solid #e6d9b3;width:45%;vertical-align:top;font-weight:bold;color:#2A1A0E;">${esc(q)}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #e6d9b3;vertical-align:top;color:#2A1A0E;white-space:pre-wrap;">${
+      <td style="padding:10px 12px;border-bottom:1px solid #E4DFD3;width:45%;vertical-align:top;font-weight:bold;color:#5A5855;">${esc(q)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #E4DFD3;vertical-align:top;color:#5A5855;white-space:pre-wrap;">${
         a ? esc(a) : '<span style="color:#9a9a9a;">–</span>'
       }</td>
     </tr>`;
@@ -37,7 +37,7 @@ function buildHtml(data) {
   const sections = (data.sections || [])
     .map(
       (s) => `
-    <h3 style="margin:28px 0 8px;font-family:Arial,sans-serif;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;color:#9a7b22;border-bottom:2px solid #C9A84C;padding-bottom:6px;">${esc(s.title)}</h3>
+    <h3 style="margin:28px 0 8px;font-family:Arial,sans-serif;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;color:#D4922A;border-bottom:2px solid #D4922A;padding-bottom:6px;">${esc(s.title)}</h3>
     <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;">
       ${(s.items || []).map((i) => row(i.q, i.a)).join("")}
     </table>`
@@ -45,11 +45,11 @@ function buildHtml(data) {
     .join("");
 
   return `<!DOCTYPE html>
-<html><body style="margin:0;background:#F5EDD6;padding:24px;">
-  <div style="max-width:760px;margin:0 auto;background:#fffdf7;border:1px solid #e6d9b3;">
-    <div style="background:#2A1A0E;padding:24px 28px;border-bottom:4px solid #C9A84C;">
-      <div style="font-family:Arial,sans-serif;font-size:12px;letter-spacing:0.35em;color:#C9A84C;font-weight:bold;">L U M O</div>
-      <div style="font-family:Georgia,serif;font-size:22px;color:#F5EDD6;margin-top:10px;">Neue Fragebogen-Antwort</div>
+<html><body style="margin:0;background:#F5F0E8;padding:24px;">
+  <div style="max-width:760px;margin:0 auto;background:#FFFFFF;border:1px solid #E4DFD3;">
+    <div style="background:#F5F0E8;padding:24px 28px;border-bottom:4px solid #D4922A;">
+      <div style="font-family:Arial,sans-serif;font-size:12px;letter-spacing:0.3em;color:#D4922A;font-weight:bold;">L U M O</div>
+      <div style="font-family:Arial,sans-serif;font-size:22px;font-weight:bold;color:#5A5855;margin-top:10px;">Neue Fragebogen-Antwort</div>
     </div>
     <div style="padding:8px 28px 28px;">
       <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;margin-top:18px;">${metaRows}</table>
